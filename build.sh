@@ -5,6 +5,7 @@ set -e
 #   ./build.sh breakout              # Native train/eval -> ./puffer
 #   ./build.sh breakout mybin        # Native -> ./mybin (does not clobber ./puffer)
 #   ./build.sh breakout --cu         # CUDA env (ENV_HEADER=ocean/ENV/ENV.cu; exclusive vs .h)
+#   ./build.sh doom                  # Original Doom C engine with Freedoom data (Linux)
 #   ./build.sh robot_arm             # CUDA-only; implies --cu
 #   ./build.sh breakout --float      # float32 precision (required for --slowly)
 #   ./build.sh breakout --cpu        # Play/eval binary (optimized) -> ./ENV
@@ -179,6 +180,29 @@ elif [ "$ENV" = "impulse_wars" ]; then
     if [ -z "${MODE:-}" ] || [ "$MODE" = "native" ] || [ "$MODE" = "profile" ]; then
         EXTRA_SRC="ocean/impulse_wars/impulse_wars_api.c"
     fi
+elif [ "$ENV" = "doom" ]; then
+    if [ "$PLATFORM" != "Linux" ] || [ "$MODE" = "web" ] || [ "$USE_GPU_ENV" = "1" ]; then
+        echo "Error: Doom uses a native Linux CPU environment" >&2
+        exit 1
+    fi
+    SRC_DIR="ocean/doom"
+    DOOM_DIR="vendor/doomgeneric/doomgeneric"
+    git submodule update --init vendor/doomgeneric
+    mkdir -p build
+    (
+        cd build
+        download freedoom-0.13.0 \
+            https://github.com/freedoom/freedoom/releases/download/v0.13.0/freedoom-0.13.0.zip
+    )
+    doom_sources=$(sed -n 's/^SRC_DOOM = //p' "$DOOM_DIR/Makefile")
+    make --no-print-directory -C "$DOOM_DIR" -f Makefile -f - -j"$(nproc)" \
+        OBJDIR="$(pwd)/build/doom_objects" OUTPUT="$(pwd)/build/doom_worker" \
+        SRC_DOOM="${doom_sources% doomgeneric_xlib.o} doom_worker.o" LIBS=-lm \
+        CFLAGS="-O2 -D_DEFAULT_SOURCE -DNORMALUNIX -DLINUX -DSNDSERV \
+        -DDOOMGENERIC_RESX=320 -DDOOMGENERIC_RESY=200" <<'MAKE'
+$(OBJDIR)/doom_worker.o: ../../../ocean/doom/doom_worker.c ../../../ocean/doom/doom_ipc.h
+	$(CC) $(CFLAGS) -I. -c $< -o $@
+MAKE
 elif [ "$ENV" = "nethack" ]; then
     SRC_DIR="ocean/$ENV"
     EXTRA_CFLAGS+=(-DPUFFER_NETHACK)
